@@ -1,0 +1,90 @@
+#ifndef HASH_RBTREE_H
+#define HASH_RBTREE_H
+
+#include "Node.h"
+#include "BRTree.h"
+#include <vector>
+#include <unordered_map>
+#include <stdexcept>
+
+class HashRBTree {
+private:
+    // 修改：存储Node指针以正确利用内存池
+    std::unordered_map<float, std::vector<Node*>> spillBuckets;
+
+    RBTree spillTree;
+
+    struct MemoryPool {
+        static constexpr size_t BLOCK_SIZE = 1 << 20; // 1M nodes per block
+        std::vector<std::unique_ptr<Node[]>> blocks;
+        size_t ptr = 0;
+
+        Node* allocate() {
+            if (blocks.empty() || ptr >= BLOCK_SIZE) {
+                blocks.emplace_back(new Node[BLOCK_SIZE]);
+                ptr = 0;
+            }
+            return &blocks.back()[ptr++];
+        }
+    } nodePool;
+
+    // 新增：维护实际元素数量
+    size_t elementCount = 0;
+
+public:
+    void push(const Node& node) {
+        const float spill = node.spill;
+        auto& bucket = spillBuckets[spill];
+
+        if (bucket.empty()) {
+            // 修正：确保比较仅基于spill值
+            spillTree.push(Node(spill, 0, 0)); // 使用有效坐标
+        }
+
+        // 修改：存储指针避免拷贝
+        Node* newNode = nodePool.allocate();
+        *newNode = node;
+        bucket.push_back(newNode);
+        elementCount++; // 维护计数器
+    }
+
+    Node pop() {
+        if (spillTree.empty()) {
+            throw std::runtime_error("Priority queue is empty");
+        }
+
+        const Node minSpillNode = spillTree.top();
+        const float minSpill = minSpillNode.spill;
+        auto& bucket = spillBuckets[minSpill];
+
+        // 修改：通过指针获取数据
+        Node minNode = *bucket.back();
+        bucket.pop_back();
+        elementCount--;
+
+        if (bucket.empty()) {
+            spillBuckets.erase(minSpill);
+            spillTree.pop();
+        }
+
+        return minNode;
+    }
+
+    Node top() {
+        if (spillTree.empty()) {
+            throw std::runtime_error("Priority queue is empty");
+        }
+        return *spillBuckets[spillTree.top().spill].back(); // 解引用指针
+    }
+
+    bool empty() {
+        return spillTree.empty();
+    }
+
+    // 修正：直接返回元素计数器
+    size_t size() const {
+        return elementCount;
+    }
+};
+
+#endif // HASH_RBTREE_H
